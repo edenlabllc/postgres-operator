@@ -659,6 +659,47 @@ for both master and replica pooler services (if `enableReplicaConnectionPooler`
 * **resources**
   Resource configuration for connection pooler deployment.
 
+* **inheritPodAnnotations**
+  When `true` (default), `spec.podAnnotations` and operator `custom_pod_annotations`
+  are applied to connection pooler pods as well as Spilo pods. Set to `false` to
+  apply annotations to Spilo pods only and use `connectionPooler.podAnnotations`
+  for the pooler.
+
+* **podAnnotations**
+  Annotations applied to connection pooler pods only. Merged on top of inherited
+  annotations when `inheritPodAnnotations` is `true`.
+
+* **inheritPodLabels**
+  When `true` (default), labels from the Postgres CR metadata listed under operator
+  `inherited_labels` are applied to connection pooler pods. Set to `false` to
+  skip them.
+
+* **podLabels**
+  Extra labels applied to connection pooler pods only, merged on top of the base
+  pooler labels.
+
+* **nodeAffinity**
+  Node affinity for connection pooler pods. When omitted, `spec.nodeAffinity` is
+  used.
+
+* **podAntiAffinity**
+  Pod anti-affinity for connection pooler pods. When omitted, operator-level
+  `enable_pod_antiaffinity`, `pod_antiaffinity_preferred_during_scheduling`, and
+  `pod_antiaffinity_topology_key` apply.
+
+  * **enabled** - enable or disable pod anti-affinity for the pooler.
+  * **preferredDuringScheduling** - use soft (`true`) or hard (`false`) anti-affinity.
+  * **topologyKey** - topology key for anti-affinity (default from operator config).
+
+* **deploymentStrategy**
+  Rollout strategy for the pooler Deployment. When omitted, the operator does
+  not set strategy and Kubernetes defaults apply (`RollingUpdate` with 25%
+  `maxSurge` / `maxUnavailable`).
+
+  * **type** - deployment strategy type, typically `RollingUpdate`.
+  * **rollingUpdate.maxSurge** - maximum extra pods during rollout (e.g. `0`).
+  * **rollingUpdate.maxUnavailable** - maximum unavailable pods during rollout (e.g. `1`).
+
 ## Custom TLS certificates
 
 Those parameters are grouped under the `tls` top-level key. Note, you have to

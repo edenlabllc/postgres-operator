@@ -11,6 +11,34 @@ clusters on Kubernetes (K8s) powered by [Patroni](https://github.com/zalando/pat
 It is configured only through Postgres manifests (CRDs) to ease integration into automated CI/CD
 pipelines with no access to Kubernetes API directly, promoting infrastructure as code vs manual operations.
 
+## Changes by Edenlab LLC
+
+This fork by [Edenlab LLC](https://edenlab.io/) extends the `connectionPooler` section of the
+Postgres CR with optional, backward-compatible pooler-specific pod template and deployment
+settings. When omitted, behavior matches upstream Zalando Postgres Operator v1.15.1.
+
+New fields:
+
+* **inheritPodAnnotations** / **podAnnotations** — apply `spec.podAnnotations` to Spilo pods only
+  and set pooler annotations separately (e.g. keep Prometheus scrape on Postgres, not on PgBouncer).
+* **inheritPodLabels** / **podLabels** — same pattern for labels.
+* **nodeAffinity** / **podAntiAffinity** — pooler-specific scheduling overrides.
+* **deploymentStrategy** — control pooler Deployment rollout (e.g. `maxSurge: 0` /
+  `maxUnavailable: 1` on small clusters with required pod anti-affinity).
+
+See [connection pooler parameters](docs/reference/cluster_manifest.md#connection-pooler) and
+[examples](docs/user.md) for details.
+
+It also adds GitHub Actions [workflows](.github/workflows) to build and publish Docker images.
+
+Images are published to the public ECR gallery:
+[public.ecr.aws/edenlabllc/core.postgres-operator](https://gallery.ecr.aws/edenlabllc/core.postgres-operator)
+
+Fork changes are based on upstream
+[v1.15.1](https://github.com/zalando/postgres-operator/releases/tag/v1.15.1) and released under
+Git tags such as [`v1.15.2`](https://github.com/edenlabllc/postgres-operator/releases/tag/v1.15.2)
+(Gitflow: merge `release/v1.15.2` into `master`, CI tags and publishes the image).
+
 ### Operator features
 
 * Rolling updates on Postgres cluster changes, incl. quick minor version updates

@@ -109,7 +109,11 @@ spec:
 #  spiloRunAsGroup: 103
 #  spiloFSGroup: 103
 #  podAnnotations:
-#    annotation.key: value
+#    prometheus.io/scrape: "true"
+#    prometheus.io/port: "8008"
+#    prometheus.io/path: /metrics
+#  # podAnnotations apply to Spilo pods and, by default, to connection pooler pods too.
+#  # Use connectionPooler.inheritPodAnnotations: false to keep them on DB pods only.
 #  serviceAnnotations:
 #    annotation.key: value
 #  podPriorityClassName: "spilo-pod-priority"
@@ -184,6 +188,33 @@ spec:
 #      limits:
 #        cpu: "1"
 #        memory: 100Mi
+#    # Pooler-specific pod annotations (optional). By default pooler inherits spec.podAnnotations.
+#    inheritPodAnnotations: false
+#    podAnnotations:
+#      linkerd.io/inject: enabled
+#    # Pooler-specific pod labels (optional). By default pooler inherits inherited_labels from CR metadata.
+#    inheritPodLabels: true
+#    podLabels: {}
+#    # Override spec.nodeAffinity for pooler pods only (optional).
+#    nodeAffinity:
+#      requiredDuringSchedulingIgnoredDuringExecution:
+#        nodeSelectorTerms:
+#        - matchExpressions:
+#          - key: db
+#            operator: In
+#            values:
+#            - postgres
+#    # Override operator-level pod anti-affinity for pooler pods (optional).
+#    podAntiAffinity:
+#      enabled: true
+#      preferredDuringScheduling: false
+#      topologyKey: kubernetes.io/hostname
+#    # Deployment rollout strategy for pooler (optional). When omitted, Kubernetes defaults apply.
+#    deploymentStrategy:
+#      type: RollingUpdate
+#      rollingUpdate:
+#        maxSurge: 0
+#        maxUnavailable: 1
 
   initContainers:
   - name: date

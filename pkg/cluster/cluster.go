@@ -836,6 +836,27 @@ func (c *Cluster) compareAnnotations(old, new map[string]string, removedList *[]
 	return reason != "", reason
 }
 
+func compareLabels(old, new map[string]string) (bool, string) {
+	reason := ""
+
+	for key := range old {
+		if _, ok := new[key]; !ok {
+			reason += fmt.Sprintf(" Removed %q.", key)
+		}
+	}
+
+	for key := range new {
+		v, ok := old[key]
+		if !ok {
+			reason += fmt.Sprintf(" Added %q with value %q.", key, new[key])
+		} else if v != new[key] {
+			reason += fmt.Sprintf(" %q changed from %q to %q.", key, v, new[key])
+		}
+	}
+
+	return reason != "", reason
+}
+
 func (c *Cluster) compareServices(old, new *v1.Service) (bool, string) {
 	if old.Spec.Type != new.Spec.Type {
 		return false, fmt.Sprintf("new service's type %q does not match the current one %q",

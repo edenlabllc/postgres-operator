@@ -481,6 +481,10 @@ func (c *Cluster) waitStatefulsetPodsReady() error {
 // For backward compatibility, shouldAddExtraLabels must be false
 // when listing k8s objects. See operator PR #252
 func (c *Cluster) labelsSet(shouldAddExtraLabels bool) labels.Set {
+	return c.labelsSetWithInheritedLabels(shouldAddExtraLabels, true)
+}
+
+func (c *Cluster) labelsSetWithInheritedLabels(shouldAddExtraLabels bool, inheritCRLabels bool) labels.Set {
 	lbls := make(map[string]string)
 	for k, v := range c.OpConfig.ClusterLabels {
 		lbls[k] = v
@@ -491,17 +495,19 @@ func (c *Cluster) labelsSet(shouldAddExtraLabels bool) labels.Set {
 		// enables filtering resources owned by a team
 		lbls["team"] = c.Postgresql.Spec.TeamID
 
-		// allow to inherit certain labels from the 'postgres' object
-		if spec, err := c.GetSpec(); err == nil {
-			for k, v := range spec.ObjectMeta.Labels {
-				for _, match := range c.OpConfig.InheritedLabels {
-					if k == match {
-						lbls[k] = v
+		if inheritCRLabels {
+			// allow to inherit certain labels from the 'postgres' object
+			if spec, err := c.GetSpec(); err == nil {
+				for k, v := range spec.ObjectMeta.Labels {
+					for _, match := range c.OpConfig.InheritedLabels {
+						if k == match {
+							lbls[k] = v
+						}
 					}
 				}
+			} else {
+				c.logger.Warningf("could not get the list of InheritedLabels for cluster %q: %v", c.Name, err)
 			}
-		} else {
-			c.logger.Warningf("could not get the list of InheritedLabels for cluster %q: %v", c.Name, err)
 		}
 	}
 
