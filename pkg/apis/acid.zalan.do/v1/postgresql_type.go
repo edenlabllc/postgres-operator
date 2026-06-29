@@ -7,6 +7,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // +genclient
@@ -329,6 +330,28 @@ type PostgresStatus struct {
 // TODO: figure out what other important parameters of the connection pooler it
 // makes sense to expose. E.g. pool size (min/max boundaries), max client
 // connections etc.
+
+// ConnectionPoolerPodAntiAffinity configures pod anti-affinity for connection pooler pods.
+// When omitted, operator-level pod anti-affinity settings apply.
+type ConnectionPoolerPodAntiAffinity struct {
+	Enabled                   *bool  `json:"enabled,omitempty"`
+	PreferredDuringScheduling *bool  `json:"preferredDuringScheduling,omitempty"`
+	TopologyKey               string `json:"topologyKey,omitempty"`
+}
+
+// ConnectionPoolerRollingUpdate configures rolling update parameters for the pooler Deployment.
+type ConnectionPoolerRollingUpdate struct {
+	MaxSurge       *intstr.IntOrString `json:"maxSurge,omitempty"`
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
+}
+
+// ConnectionPoolerDeploymentStrategy configures the pooler Deployment rollout strategy.
+// When omitted, the operator does not set strategy and Kubernetes defaults apply.
+type ConnectionPoolerDeploymentStrategy struct {
+	Type          string                         `json:"type,omitempty"`
+	RollingUpdate *ConnectionPoolerRollingUpdate `json:"rollingUpdate,omitempty"`
+}
+
 type ConnectionPooler struct {
 	// +kubebuilder:validation:Minimum=1
 	NumberOfInstances *int32 `json:"numberOfInstances,omitempty"`
@@ -338,6 +361,21 @@ type ConnectionPooler struct {
 	Mode             string `json:"mode,omitempty"`
 	DockerImage      string `json:"dockerImage,omitempty"`
 	MaxDBConnections *int32 `json:"maxDBConnections,omitempty"`
+
+	// InheritPodAnnotations when true (default) merges spec.podAnnotations onto pooler pods.
+	InheritPodAnnotations *bool `json:"inheritPodAnnotations,omitempty"`
+	// PodAnnotations are applied to pooler pods only, merged on top when InheritPodAnnotations is true.
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
+	// InheritPodLabels when true (default) inherits cluster labels configured via inherited_labels.
+	InheritPodLabels *bool `json:"inheritPodLabels,omitempty"`
+	// PodLabels are applied to pooler pods only, merged on top of base pooler labels.
+	PodLabels map[string]string `json:"podLabels,omitempty"`
+	// NodeAffinity overrides spec.nodeAffinity for pooler pods when set.
+	NodeAffinity *v1.NodeAffinity `json:"nodeAffinity,omitempty"`
+	// PodAntiAffinity overrides operator-level pod anti-affinity for pooler pods when set.
+	PodAntiAffinity *ConnectionPoolerPodAntiAffinity `json:"podAntiAffinity,omitempty"`
+	// DeploymentStrategy configures pooler Deployment rollout; when omitted K8s defaults apply.
+	DeploymentStrategy *ConnectionPoolerDeploymentStrategy `json:"deploymentStrategy,omitempty"`
 
 	*Resources `json:"resources,omitempty"`
 }

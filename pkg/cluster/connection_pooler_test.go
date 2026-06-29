@@ -17,6 +17,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -1331,4 +1332,144 @@ func TestConnectionPoolerServiceType(t *testing.T) {
 			}
 		}
 	}
+}
+
+func newPoolerTestCluster(t *testing.T, spec acidv1.PostgresSpec) *Cluster {
+	t.Helper()
+	client, _ := newFakeK8sPoolerTestClient()
+	pg := acidv1.Postgresql{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "acid-test-cluster",
+			Namespace: "default",
+		},
+		Spec: spec,
+	}
+	cluster := New(
+		Config{
+			OpConfig: config.Config{
+				EnablePodAntiAffinity:                    true,
+				PodAntiAffinityPreferredDuringScheduling: false,
+				PodAntiAffinityTopologyKey:               "kubernetes.io/hostname",
+				ConnectionPooler: config.ConnectionPooler{
+					ConnectionPoolerDefaultCPURequest:    "100m",
+					ConnectionPoolerDefaultCPULimit:      "100m",
+					ConnectionPoolerDefaultMemoryRequest: "100Mi",
+					ConnectionPoolerDefaultMemoryLimit:   "100Mi",
+					NumberOfInstances:                    k8sutil.Int32ToPointer(2),
+				},
+				PodManagementPolicy: "ordered_ready",
+				Resources: config.Resources{
+					ClusterLabels:        map[string]string{"application": "spilo"},
+					ClusterNameLabel:     "cluster-name",
+					DefaultCPURequest:    "300m",
+					DefaultCPULimit:      "300m",
+					DefaultMemoryRequest: "300Mi",
+					DefaultMemoryLimit:   "300Mi",
+					PodRoleLabel:         "spilo-role",
+				},
+			},
+		}, client, pg, logger, eventRecorder)
+	cluster.Name = pg.Name
+	cluster.Namespace = pg.Namespace
+	return cluster
+}
+
+func TestGenerateConnectionPoolerPodAnnotationsBackwardCompatible(t *testing.T) {
+	cluster := newPoolerTestCluster(t, acidv1.PostgresSpec{
+		EnableConnectionPooler: boolToPointer(true),
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+		},
+		ConnectionPooler: &acidv1.ConnectionPooler{},
+	})
+
+	annotations := cluster.generateConnectionPoolerPodAnnotations(cluster.Spec.ConnectionPooler)
+	assert.Equal(t, "true", annotations["prometheus.io/scrape"])
+}
+
+func TestGenerateConnectionPoolerPodAnnotationsWithoutInheritance(t *testing.T) {
+	cluster := newPoolerTestCluster(t, acidv1.PostgresSpec{
+		EnableConnectionPooler: boolToPointer(true),
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+		},
+		ConnectionPooler: &acidv1.ConnectionPooler{
+			InheritPodAnnotations: boolToPointer(false),
+			PodAnnotations: map[string]string{
+				"linkerd.io/inject": "enabled",
+			},
+		},
+	})
+
+	annotations := cluster.generateConnectionPoolerPodAnnotations(cluster.Spec.ConnectionPooler)
+	_, hasPrometheus := annotations["prometheus.io/scrape"]
+	assert.False(t, hasPrometheus)
+	assert.Equal(t, "enabled", annotations["linkerd.io/inject"])
+}
+
+func TestConnectionPoolerDeploymentStrategy(t *testing.T) {
+	maxSurge := intstr.FromInt(0)
+	maxUnavailable := intstr.FromInt(1)
+	cluster := newPoolerTestCluster(t, acidv1.PostgresSpec{
+		EnableConnectionPooler: boolToPointer(true),
+		ConnectionPooler: &acidv1.ConnectionPooler{
+			DeploymentStrategy: &acidv1.ConnectionPoolerDeploymentStrategy{
+				Type: "RollingUpdate",
+				RollingUpdate: &acidv1.ConnectionPoolerRollingUpdate{
+					MaxSurge:       &maxSurge,
+					MaxUnavailable: &maxUnavailable,
+				},
+			},
+		},
+	})
+	cluster.ConnectionPooler = map[PostgresRole]*ConnectionPoolerObjects{
+		Master: {
+			Name:        cluster.connectionPoolerName(Master),
+			Namespace:   cluster.Namespace,
+			ClusterName: cluster.Name,
+			Role:        Master,
+		},
+	}
+
+	deployment, err := cluster.generateConnectionPoolerDeployment(cluster.ConnectionPooler[Master])
+	assert.NoError(t, err)
+	assert.Equal(t, appsv1.RollingUpdateDeploymentStrategyType, deployment.Spec.Strategy.Type)
+	assert.Equal(t, int32(0), deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntVal)
+	assert.Equal(t, int32(1), deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntVal)
+}
+
+func TestConnectionPoolerDeploymentStrategyOmittedByDefault(t *testing.T) {
+	cluster := newPoolerTestCluster(t, acidv1.PostgresSpec{
+		EnableConnectionPooler: boolToPointer(true),
+		ConnectionPooler:       &acidv1.ConnectionPooler{},
+	})
+	cluster.ConnectionPooler = map[PostgresRole]*ConnectionPoolerObjects{
+		Master: {
+			Name:        cluster.connectionPoolerName(Master),
+			Namespace:   cluster.Namespace,
+			ClusterName: cluster.Name,
+			Role:        Master,
+		},
+	}
+
+	deployment, err := cluster.generateConnectionPoolerDeployment(cluster.ConnectionPooler[Master])
+	assert.NoError(t, err)
+	assert.Equal(t, appsv1.DeploymentStrategy{}, deployment.Spec.Strategy)
+}
+
+func TestConnectionPoolerPodAntiAffinitySettings(t *testing.T) {
+	cluster := newPoolerTestCluster(t, acidv1.PostgresSpec{
+		EnableConnectionPooler: boolToPointer(true),
+		ConnectionPooler: &acidv1.ConnectionPooler{
+			PodAntiAffinity: &acidv1.ConnectionPoolerPodAntiAffinity{
+				Enabled:                   boolToPointer(true),
+				PreferredDuringScheduling: boolToPointer(false),
+			},
+		},
+	})
+
+	enabled, preferred, topologyKey := cluster.connectionPoolerPodAntiAffinitySettings(cluster.Spec.ConnectionPooler)
+	assert.True(t, enabled)
+	assert.False(t, preferred)
+	assert.Equal(t, "kubernetes.io/hostname", topologyKey)
 }

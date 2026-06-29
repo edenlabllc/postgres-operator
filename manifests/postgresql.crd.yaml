@@ -257,6 +257,42 @@ spec:
                     type: string
                   user:
                     type: string
+                  inheritPodAnnotations:
+                    type: boolean
+                  podAnnotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  inheritPodLabels:
+                    type: boolean
+                  podLabels:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  nodeAffinity:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  podAntiAffinity:
+                    properties:
+                      enabled:
+                        type: boolean
+                      preferredDuringScheduling:
+                        type: boolean
+                      topologyKey:
+                        type: string
+                    type: object
+                  deploymentStrategy:
+                    properties:
+                      type:
+                        type: string
+                      rollingUpdate:
+                        properties:
+                          maxSurge:
+                            x-kubernetes-int-or-string: true
+                          maxUnavailable:
+                            x-kubernetes-int-or-string: true
+                        type: object
+                    type: object
                 type: object
               databases:
                 additionalProperties:

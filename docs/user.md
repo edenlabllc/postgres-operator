@@ -1190,6 +1190,11 @@ each Postgres cluster, specify:
 
 ```
 spec:
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8008"
+    prometheus.io/path: /metrics
+
   connectionPooler:
     # how many instances of connection pooler to create
     numberOfInstances: 2
@@ -1212,6 +1217,22 @@ spec:
       limits:
         cpu: "1"
         memory: 100Mi
+
+    # keep spec.podAnnotations on Spilo pods only; pooler gets podAnnotations below
+    inheritPodAnnotations: false
+    podAnnotations:
+      linkerd.io/inject: enabled
+
+    # optional pooler-specific scheduling (omit to use spec/operator defaults)
+    podAntiAffinity:
+      enabled: true
+      preferredDuringScheduling: false
+      topologyKey: kubernetes.io/hostname
+    deploymentStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
 ```
 
 The `enableConnectionPooler` flag is not required when the `connectionPooler`

@@ -114,7 +114,11 @@ func (c *Cluster) poolerUser(spec *acidv1.PostgresSpec) string {
 
 // when listing pooler k8s objects
 func (c *Cluster) poolerLabelsSet(addExtraLabels bool) labels.Set {
-	poolerLabels := c.labelsSet(addExtraLabels)
+	return c.poolerLabelsSetWithInherit(addExtraLabels, true)
+}
+
+func (c *Cluster) poolerLabelsSetWithInherit(addExtraLabels bool, inheritCRLabels bool) labels.Set {
+	poolerLabels := c.labelsSetWithInheritedLabels(addExtraLabels, inheritCRLabels)
 
 	// TODO should be config values
 	poolerLabels["application"] = "db-connection-pooler"
@@ -122,13 +126,16 @@ func (c *Cluster) poolerLabelsSet(addExtraLabels bool) labels.Set {
 	return poolerLabels
 }
 
-// Return connection pooler labels selector, which should from one point of view
-// inherit most of the labels from the cluster itself, but at the same time
-// have e.g. different `application` label, so that recreatePod operation will
-// not interfere with it (it lists all the pods via labels, and if there would
-// be no difference, it will recreate also pooler pods).
-func (c *Cluster) connectionPoolerLabels(role PostgresRole, addExtraLabels bool) *metav1.LabelSelector {
-	poolerLabelsSet := c.poolerLabelsSet(addExtraLabels)
+func (c *Cluster) connectionPoolerSpec() *acidv1.ConnectionPooler {
+	if c.Spec.ConnectionPooler != nil {
+		return c.Spec.ConnectionPooler
+	}
+	return &acidv1.ConnectionPooler{}
+}
+
+func (c *Cluster) connectionPoolerLabelsForSpec(role PostgresRole, addExtraLabels bool, poolerSpec *acidv1.ConnectionPooler) *metav1.LabelSelector {
+	inheritLabels := poolerSpec.InheritPodLabels == nil || *poolerSpec.InheritPodLabels
+	poolerLabelsSet := c.poolerLabelsSetWithInherit(addExtraLabels, inheritLabels)
 
 	// TODO should be config values
 	poolerLabelsSet["connection-pooler"] = c.connectionPoolerName(role)
@@ -140,10 +147,100 @@ func (c *Cluster) connectionPoolerLabels(role PostgresRole, addExtraLabels bool)
 		poolerLabelsSet = labels.Merge(poolerLabelsSet, extraLabels)
 	}
 
+	if poolerSpec.PodLabels != nil {
+		poolerLabelsSet = labels.Merge(poolerLabelsSet, poolerSpec.PodLabels)
+	}
+
 	return &metav1.LabelSelector{
 		MatchLabels:      poolerLabelsSet,
 		MatchExpressions: nil,
 	}
+}
+
+func (c *Cluster) connectionPoolerLabels(role PostgresRole, addExtraLabels bool) *metav1.LabelSelector {
+	return c.connectionPoolerLabelsForSpec(role, addExtraLabels, c.connectionPoolerSpec())
+}
+
+func (c *Cluster) generateConnectionPoolerPodAnnotations(poolerSpec *acidv1.ConnectionPooler) map[string]string {
+	spec := &c.Spec
+	annotations := make(map[string]string)
+
+	inherit := poolerSpec.InheritPodAnnotations == nil || *poolerSpec.InheritPodAnnotations
+	if inherit {
+		if podAnn := c.generatePodAnnotations(spec); podAnn != nil {
+			for k, v := range podAnn {
+				annotations[k] = v
+			}
+		} else {
+			for k, v := range c.OpConfig.CustomPodAnnotations {
+				annotations[k] = v
+			}
+		}
+	} else {
+		for k, v := range c.OpConfig.CustomPodAnnotations {
+			annotations[k] = v
+		}
+	}
+
+	if poolerSpec.PodAnnotations != nil {
+		for k, v := range poolerSpec.PodAnnotations {
+			annotations[k] = v
+		}
+	}
+
+	return c.annotationsSet(annotations)
+}
+
+func (c *Cluster) connectionPoolerNodeAffinity(spec *acidv1.PostgresSpec, poolerSpec *acidv1.ConnectionPooler) *v1.NodeAffinity {
+	if poolerSpec.NodeAffinity != nil {
+		return poolerSpec.NodeAffinity
+	}
+	return spec.NodeAffinity
+}
+
+func (c *Cluster) connectionPoolerPodAntiAffinitySettings(poolerSpec *acidv1.ConnectionPooler) (enabled bool, preferred bool, topologyKey string) {
+	enabled = c.OpConfig.EnablePodAntiAffinity
+	preferred = c.OpConfig.PodAntiAffinityPreferredDuringScheduling
+	topologyKey = c.OpConfig.PodAntiAffinityTopologyKey
+
+	if poolerSpec.PodAntiAffinity != nil {
+		if poolerSpec.PodAntiAffinity.Enabled != nil {
+			enabled = *poolerSpec.PodAntiAffinity.Enabled
+		}
+		if poolerSpec.PodAntiAffinity.PreferredDuringScheduling != nil {
+			preferred = *poolerSpec.PodAntiAffinity.PreferredDuringScheduling
+		}
+		if poolerSpec.PodAntiAffinity.TopologyKey != "" {
+			topologyKey = poolerSpec.PodAntiAffinity.TopologyKey
+		}
+	}
+
+	return enabled, preferred, topologyKey
+}
+
+func (c *Cluster) connectionPoolerDeploymentStrategy(poolerSpec *acidv1.ConnectionPooler) *appsv1.DeploymentStrategy {
+	if poolerSpec.DeploymentStrategy == nil {
+		return nil
+	}
+
+	ds := poolerSpec.DeploymentStrategy
+	strategy := &appsv1.DeploymentStrategy{
+		Type: appsv1.RollingUpdateDeploymentStrategyType,
+	}
+	if ds.Type != "" {
+		strategy.Type = appsv1.DeploymentStrategyType(ds.Type)
+	}
+	if ds.RollingUpdate != nil {
+		strategy.RollingUpdate = &appsv1.RollingUpdateDeployment{}
+		if ds.RollingUpdate.MaxSurge != nil {
+			strategy.RollingUpdate.MaxSurge = ds.RollingUpdate.MaxSurge
+		}
+		if ds.RollingUpdate.MaxUnavailable != nil {
+			strategy.RollingUpdate.MaxUnavailable = ds.RollingUpdate.MaxUnavailable
+		}
+	}
+
+	return strategy
 }
 
 // Prepare the database for connection pooler to be used, i.e. install lookup
@@ -460,9 +557,9 @@ func (c *Cluster) generateConnectionPoolerPodTemplate(role PostgresRole) (
 
 	podTemplate := &v1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels:      c.connectionPoolerLabels(role, true).MatchLabels,
+			Labels:      c.connectionPoolerLabelsForSpec(role, true, connectionPoolerSpec).MatchLabels,
 			Namespace:   c.Namespace,
-			Annotations: c.annotationsSet(c.generatePodAnnotations(spec)),
+			Annotations: c.generateConnectionPoolerPodAnnotations(connectionPoolerSpec),
 		},
 		Spec: v1.PodSpec{
 			TerminationGracePeriodSeconds: &gracePeriod,
@@ -474,14 +571,15 @@ func (c *Cluster) generateConnectionPoolerPodTemplate(role PostgresRole) (
 		},
 	}
 
-	nodeAffinity := c.nodeAffinity(c.OpConfig.NodeReadinessLabel, spec.NodeAffinity)
-	if c.OpConfig.EnablePodAntiAffinity {
-		labelsSet := labels.Set(c.connectionPoolerLabels(role, false).MatchLabels)
+	nodeAffinity := c.nodeAffinity(c.OpConfig.NodeReadinessLabel, c.connectionPoolerNodeAffinity(spec, connectionPoolerSpec))
+	enableAntiAffinity, preferredAntiAffinity, antiAffinityTopologyKey := c.connectionPoolerPodAntiAffinitySettings(connectionPoolerSpec)
+	if enableAntiAffinity {
+		labelsSet := labels.Set(c.connectionPoolerLabelsForSpec(role, false, connectionPoolerSpec).MatchLabels)
 		podTemplate.Spec.Affinity = podAffinity(
 			labelsSet,
-			c.OpConfig.PodAntiAffinityTopologyKey,
+			antiAffinityTopologyKey,
 			nodeAffinity,
-			c.OpConfig.PodAntiAffinityPreferredDuringScheduling,
+			preferredAntiAffinity,
 			true,
 		)
 	} else if nodeAffinity != nil {
@@ -544,6 +642,10 @@ func (c *Cluster) generateConnectionPoolerDeployment(connectionPooler *Connectio
 			Selector: c.connectionPoolerLabels(connectionPooler.Role, false),
 			Template: *podTemplate,
 		},
+	}
+
+	if strategy := c.connectionPoolerDeploymentStrategy(connectionPoolerSpec); strategy != nil {
+		deployment.Spec.Strategy = *strategy
 	}
 
 	return deployment, nil
@@ -1183,7 +1285,7 @@ func (c *Cluster) syncConnectionPoolerWorker(oldSpec, newSpec *acidv1.Postgresql
 			syncReason = append(syncReason, specReason...)
 		}
 
-		newPodAnnotations := c.annotationsSet(c.generatePodAnnotations(&c.Spec))
+		newPodAnnotations := c.generateConnectionPoolerPodAnnotations(newConnectionPooler)
 		deletedPodAnnotations := []string{}
 		if changed, reason := c.compareAnnotations(deployment.Spec.Template.Annotations, newPodAnnotations, &deletedPodAnnotations); changed {
 			specSync = true
@@ -1206,6 +1308,28 @@ func (c *Cluster) syncConnectionPoolerWorker(oldSpec, newSpec *acidv1.Postgresql
 			}
 
 			deployment.Spec.Template.Annotations = newPodAnnotations
+		}
+
+		newPodLabels := c.connectionPoolerLabelsForSpec(role, true, newConnectionPooler).MatchLabels
+		if changed, reason := compareLabels(deployment.Spec.Template.Labels, newPodLabels); changed {
+			specSync = true
+			syncReason = append(syncReason, []string{"new connection pooler's pod template labels do not match the current ones: " + reason}...)
+		}
+
+		expectedPodTemplate, err := c.generateConnectionPoolerPodTemplate(role)
+		if err != nil {
+			return nil, fmt.Errorf("could not generate pod template for %s connection pooler: %v", role, err)
+		}
+		if !reflect.DeepEqual(deployment.Spec.Template.Spec.Affinity, expectedPodTemplate.Spec.Affinity) {
+			specSync = true
+			syncReason = append(syncReason, "new connection pooler's pod template affinity does not match the current one")
+		}
+
+		if desiredStrategy := c.connectionPoolerDeploymentStrategy(newConnectionPooler); desiredStrategy != nil {
+			if !reflect.DeepEqual(deployment.Spec.Strategy, *desiredStrategy) {
+				specSync = true
+				syncReason = append(syncReason, "new connection pooler deployment strategy does not match the current one")
+			}
 		}
 
 		defaultsSync, defaultsReason := c.needSyncConnectionPoolerDefaults(&c.Config, newConnectionPooler, deployment)

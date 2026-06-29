@@ -1,0 +1,50 @@
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: acid-pooler-cluster
+  annotations:
+    linkerd.io/inject: enabled
+spec:
+  teamId: "acid"
+  volume:
+    size: 1Gi
+  numberOfInstances: 2
+  enableConnectionPooler: true
+  users:
+    zalando:
+    - superuser
+    - createdb
+    pooler: []
+  databases:
+    foo: zalando
+  postgresql:
+    version: "17"
+  # Applied to Spilo pods. Also inherited by pooler unless inheritPodAnnotations is false.
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8008"
+    prometheus.io/path: /metrics
+  connectionPooler:
+    numberOfInstances: 2
+    mode: session
+    schema: pooler
+    user: pooler
+    resources:
+      requests:
+        cpu: 300m
+        memory: 100Mi
+      limits:
+        cpu: "1"
+        memory: 100Mi
+    inheritPodAnnotations: false
+    podAnnotations:
+      linkerd.io/inject: enabled
+    podAntiAffinity:
+      enabled: true
+      preferredDuringScheduling: false
+      topologyKey: kubernetes.io/hostname
+    deploymentStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
