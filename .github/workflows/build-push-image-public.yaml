@@ -29,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "^1.25.3"
+          go-version: "^1.26.4"
           cache-dependency-path: go.sum
 
       - name: Configure AWS credentials
@@ -63,15 +63,22 @@ jobs:
           registry-type: public
 
       - name: Run unit tests
-        run: make deps mocks test
+        run: |
+          make mocks
+          make linux
+          go test -race ./...
 
       - name: Build and push Docker image
         run: |
-          export IMAGE="${ECR_REPOSITORY}/${IMAGE_NAME}"
-          export TAG="${VERSION}"
-          export VERSION="${VERSION}"
+          readonly IMAGE="${ECR_REPOSITORY}/${IMAGE_NAME}"
+          readonly TAG="${VERSION}"
 
-          make docker
+          docker build --platform linux/amd64 \
+            -f docker/Dockerfile \
+            --build-arg VERSION="${VERSION}" \
+            -t "${IMAGE}:${TAG}" \
+            .
+
           docker push "${IMAGE}:${TAG}"
 
       - name: Create Git tag and GitHub release
